@@ -8,37 +8,43 @@
     "weixin"
   ],
   "files": [
-    "dist",
+    "dist/pi",
     "README.md"
   ],
   "type": "module",
   "scripts": {
     "build": "vp run ci:build",
+    "bundle:check": "vp run ci:bundle",
     "check": "vp check",
+    "distribution:check": "vp run ci:distribution",
     "effect:scan": "vp run ci:effect",
-    "smoke": "vp run ci:smoke",
+    "pack:plugin": "pnpm pack --out pi-weixin-%v.tgz",
     "test": "vp test",
     "typecheck": "vp run ci:typecheck",
     "verify": "vp run ci:verify",
-    "prepack": "vp run ci:build && vp run ci:smoke"
-  },
-  "dependencies": {
-    "@effect/platform-node": "4.0.0-beta.98",
-    "effect": "4.0.0-beta.98",
-    "qrcode": "^1.5.4"
+    "prepack": "vp run ci:build && vp run ci:bundle"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.80.6",
     "@effect/language-service": "0.87.0",
     "@effect/opentelemetry": "4.0.0-beta.98",
+    "@effect/platform-node": "4.0.0-beta.98",
     "@effect/vitest": "4.0.0-beta.98",
     "@types/node": "^25.0.0",
     "@types/qrcode": "^1.5.6",
+    "acorn": "8.15.0",
+    "effect": "4.0.0-beta.98",
+    "qrcode": "^1.5.4",
     "typescript": "5.9.3",
     "vite-plus": "0.2.4"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "^0.80.6"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
   },
   "engines": {
     "node": "^22.19.0 || >=24.11.0"
@@ -46,7 +52,7 @@
   "packageManager": "pnpm@10.11.0",
   "pi": {
     "extensions": [
-      "./dist/weixin.mjs"
+      "./dist/pi/extension.js"
     ]
   }
 }

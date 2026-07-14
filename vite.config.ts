@@ -18,11 +18,15 @@ export default defineConfig({
   run: {
     tasks: {
       "ci:build": {
-        command: "vp pack extensions/weixin.ts --format esm --out-dir dist",
+        command: "node scripts/build.ts",
         cache: false,
       },
-      "ci:smoke": {
-        command: "node scripts/smoke-extension.mjs",
+      "ci:bundle": {
+        command: "node scripts/verify-distribution.ts bundle",
+        cache: false,
+      },
+      "ci:distribution": {
+        command: "node scripts/verify-distribution.ts package",
         cache: false,
       },
       "ci:typecheck": {
@@ -40,7 +44,7 @@ export default defineConfig({
           "vp test",
           "vp run ci:effect",
           "vp run ci:build",
-          "vp run ci:smoke",
+          "vp run ci:distribution",
         ],
         cache: false,
       },

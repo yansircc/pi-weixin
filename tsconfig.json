@@ -26,5 +26,11 @@
       }
     ]
   },
-  "include": ["extensions/**/*.ts", "src/**/*.ts", "test/**/*.ts", "vite.config.ts"]
+  "include": [
+    "extensions/**/*.ts",
+    "scripts/**/*.ts",
+    "src/**/*.ts",
+    "test/**/*.ts",
+    "vite.config.ts"
+  ]
 }

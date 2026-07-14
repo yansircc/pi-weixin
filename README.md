@@ -29,7 +29,34 @@ pnpm verify
 pnpm build
 ```
 
-`pnpm verify` 依次执行格式与 lint、Effect language service 类型检查、测试、Effect scanner、打包和 extension 注册 smoke。Pi 加载的唯一构建入口是 `dist/weixin.mjs`。
+`pnpm verify` 依次执行格式与 lint、Effect language service 类型检查、测试、Effect scanner、自包含构建、tarball 内容检查，以及零安装目录中的 Pi extension loader 验收。Pi 加载的唯一构建入口是 `dist/pi/extension.js`。
+
+## 分发
+
+生成可直接交付的压缩包：
+
+```bash
+pnpm pack:plugin
+```
+
+产物为 `pi-weixin-<version>.tgz`。`effect`、`@effect/platform-node`、`qrcode` 和项目源码均已收进单文件 bundle；发布包没有普通 `dependencies`，运行时只允许依赖 Node 内建模块和 Pi 宿主 API。
+
+接收方不需要执行 `npm install` 或 `pnpm install`：
+
+```bash
+mkdir -p "$HOME/pi-plugins/pi-weixin"
+tar -xzf pi-weixin-0.0.1.tgz \
+  -C "$HOME/pi-plugins/pi-weixin" \
+  --strip-components=1
+```
+
+然后在 pi-web 插件设置中填入：
+
+```text
+~/pi-plugins/pi-weixin
+```
+
+发布包只包含 `package.json`、`README.md` 和 `dist/pi/extension.js`。
 
 ## 命令
 

@@ -1,9 +1,10 @@
-import { layer as NodeServicesLayer } from "@effect/platform-node/NodeServices";
-import { layerUndici as NodeHttpClientLayer } from "@effect/platform-node/NodeHttpClient";
+import { layer as NodeFileSystemLayer } from "@effect/platform-node/NodeFileSystem";
+import { layer as NodePathLayer } from "@effect/platform-node/NodePath";
 import { Layer, ManagedRuntime } from "effect";
+import { FetchHttpClient } from "effect/unstable/http";
 import { Bridge, BridgeLive } from "./bridge.ts";
 
-const PlatformLive = Layer.merge(NodeServicesLayer, NodeHttpClientLayer);
+const PlatformLive = Layer.mergeAll(NodeFileSystemLayer, NodePathLayer, FetchHttpClient.layer);
 
 const AppLive = BridgeLive.pipe(Layer.provide(PlatformLive));
 

@@ -7,16 +7,6 @@ settings:
 importers:
 
   .:
-    dependencies:
-      '@effect/platform-node':
-        specifier: 4.0.0-beta.98
-        version: 4.0.0-beta.98(effect@4.0.0-beta.98)(ioredis@5.11.1)
-      effect:
-        specifier: 4.0.0-beta.98
-        version: 4.0.0-beta.98
-      qrcode:
-        specifier: ^1.5.4
-        version: 1.5.4
     devDependencies:
       '@earendil-works/pi-coding-agent':
         specifier: ^0.80.6
@@ -27,6 +17,9 @@ importers:
       '@effect/opentelemetry':
         specifier: 4.0.0-beta.98
         version: 4.0.0-beta.98(@opentelemetry/api@1.9.0)(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.0-beta.98)
+      '@effect/platform-node':
+        specifier: 4.0.0-beta.98
+        version: 4.0.0-beta.98(effect@4.0.0-beta.98)(ioredis@5.11.1)
       '@effect/vitest':
         specifier: 4.0.0-beta.98
         version: 4.0.0-beta.98(effect@4.0.0-beta.98)(vitest@4.1.10)
@@ -36,6 +29,15 @@ importers:
       '@types/qrcode':
         specifier: ^1.5.6
         version: 1.5.6
+      acorn:
+        specifier: 8.15.0
+        version: 8.15.0
+      effect:
+        specifier: 4.0.0-beta.98
+        version: 4.0.0-beta.98
+      qrcode:
+        specifier: ^1.5.4
+        version: 1.5.4
       typescript:
         specifier: 5.9.3
         version: 5.9.3
@@ -998,6 +1000,11 @@ packages:
     engines: {node: '>=20.0.0'}
     cpu: [x64]
     os: [win32]
+
+  acorn@8.15.0:
+    resolution: {integrity: sha512-NZyJarBfL7nWwIq+FDL6Zp/yHEhePMNnnJ0y3qfieCrmNvYct8uvtiV41UvlSe6apAfk0fY1FbWx+NwfmpvtTg==}
+    engines: {node: '>=0.4.0'}
+    hasBin: true
 
   agent-base@7.1.4:
     resolution: {integrity: sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==}
@@ -2682,6 +2689,8 @@ snapshots:
 
   '@voidzero-dev/vite-plus-win32-x64-msvc@0.2.4':
     optional: true
+
+  acorn@8.15.0: {}
 
   agent-base@7.1.4: {}
 
