@@ -3,11 +3,12 @@ import type {
   ExtensionCommandContext,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { Effect } from "effect";
+import { Effect, Exit, Fiber, Option, Ref, Semaphore, Stream } from "effect";
 import QRCode from "qrcode";
 import { Bridge, type BridgeStatus } from "../src/bridge.ts";
 import { BridgeConfigurationError, QrCodeError } from "../src/errors.ts";
 import { getPiWeixinRuntime } from "../src/runtime.ts";
+import { projectSessionStatus } from "../src/session-status.ts";
 
 interface ImageWidgetUi {
   setImageWidget?: (
@@ -37,16 +38,6 @@ const formatStatus = (status: BridgeStatus): string => {
   const error = status.lastError ? `，错误：${status.lastError}` : "";
   return `${state}${account}${session}${error}`;
 };
-
-const syncStatus = (ctx: ExtensionContext) =>
-  Effect.gen(function* () {
-    const bridge = yield* Bridge;
-    const status = yield* bridge.status;
-    yield* Effect.sync(() => {
-      ctx.ui.setStatus("weixin", status.running ? "微信已连接" : undefined);
-    });
-    return status;
-  });
 
 const clearLoginWidget = (ctx: ExtensionCommandContext, imageUi: ImageWidgetUi) =>
   Effect.sync(() => {
@@ -114,7 +105,6 @@ const login = (ctx: ExtensionCommandContext) =>
     const auth = yield* bridge
       .loginAndBind(callbacks, bindingFrom(ctx))
       .pipe(Effect.ensuring(clearLoginWidget(ctx, imageUi)));
-    yield* syncStatus(ctx);
     yield* Effect.sync(() => {
       ctx.ui.notify(`微信已登录并绑定当前 session：${auth.accountId}`, "info");
     });
@@ -129,26 +119,24 @@ const handleCommandEffect = (args: string, ctx: ExtensionCommandContext) =>
         return yield* login(ctx);
       case "bind":
         yield* bridge.bind(bindingFrom(ctx));
-        yield* syncStatus(ctx);
         return yield* Effect.sync(() => ctx.ui.notify("微信已绑定当前 Pi session", "info"));
       case "start":
         yield* bridge.setEnabled(true);
-        return yield* syncStatus(ctx).pipe(
+        return yield* bridge.status.pipe(
           Effect.tap((status) => Effect.sync(() => ctx.ui.notify(formatStatus(status), "info"))),
           Effect.asVoid,
         );
       case "stop":
         yield* bridge.setEnabled(false);
-        return yield* syncStatus(ctx).pipe(
+        return yield* bridge.status.pipe(
           Effect.tap((status) => Effect.sync(() => ctx.ui.notify(formatStatus(status), "info"))),
           Effect.asVoid,
         );
       case "logout":
         yield* bridge.logout;
-        yield* syncStatus(ctx);
         return yield* Effect.sync(() => ctx.ui.notify("微信登录和 session 绑定已清除", "info"));
       case "status":
-        return yield* syncStatus(ctx).pipe(
+        return yield* bridge.status.pipe(
           Effect.tap((status) => Effect.sync(() => ctx.ui.notify(formatStatus(status), "info"))),
           Effect.asVoid,
         );
@@ -161,6 +149,43 @@ const handleCommandEffect = (args: string, ctx: ExtensionCommandContext) =>
 
 export default function weixinExtension(pi: ExtensionAPI): void {
   const runtime = getPiWeixinRuntime();
+  const statusFiber = Ref.makeUnsafe(Option.none<Fiber.Fiber<void, unknown>>());
+  const statusLifecycle = Semaphore.makeUnsafe(1);
+
+  const stopStatusSyncRaw = Ref.getAndSet(statusFiber, Option.none()).pipe(
+    Effect.flatMap(
+      Option.match({
+        onNone: () => Effect.void,
+        onSome: (fiber) => Fiber.interrupt(fiber).pipe(Effect.asVoid),
+      }),
+    ),
+  );
+  const stopStatusSync = statusLifecycle.withPermits(1)(stopStatusSyncRaw);
+
+  const startStatusSync = (ctx: ExtensionContext) =>
+    statusLifecycle.withPermits(1)(
+      Effect.gen(function* () {
+        yield* stopStatusSyncRaw;
+        const bridge = yield* Bridge;
+        const sessionId = ctx.sessionManager.getSessionId();
+        const fiber = yield* bridge.statusChanges.pipe(
+          Stream.map(
+            Exit.match({
+              onFailure: () => undefined,
+              onSuccess: (status) => projectSessionStatus(status, sessionId),
+            }),
+          ),
+          Stream.changes,
+          Stream.runForEach((text) =>
+            Effect.sync(() => {
+              ctx.ui.setStatus("weixin", text);
+            }),
+          ),
+          Effect.forkDetach,
+        );
+        yield* Ref.set(statusFiber, Option.some(fiber));
+      }),
+    );
 
   pi.registerCommand("weixin", {
     description: "连接微信 iLink 与当前 Pi session",
@@ -171,8 +196,8 @@ export default function weixinExtension(pi: ExtensionAPI): void {
     runtime.runPromise(
       Effect.gen(function* () {
         const bridge = yield* Bridge;
+        yield* startStatusSync(ctx);
         yield* bridge.start;
-        yield* syncStatus(ctx);
       }),
     ),
   );
@@ -181,6 +206,7 @@ export default function weixinExtension(pi: ExtensionAPI): void {
     runtime.runPromise(
       Effect.gen(function* () {
         const bridge = yield* Bridge;
+        yield* stopStatusSync;
         yield* bridge.cancelLogin;
       }),
     ),

@@ -2,13 +2,16 @@ import {
   Config,
   Context,
   Effect,
+  Exit,
   Fiber,
   Layer,
   Option,
   Path,
+  PubSub,
   Ref,
   Schema,
   Semaphore,
+  Stream,
 } from "effect";
 import { HttpClient } from "effect/unstable/http";
 import {
@@ -116,6 +119,7 @@ type BridgeLoopError = BatchError;
 
 export interface BridgeService {
   readonly status: Effect.Effect<BridgeStatus, StateStoreError>;
+  readonly statusChanges: Stream.Stream<Exit.Exit<BridgeStatus, StateStoreError>>;
   readonly start: Effect.Effect<boolean, StateStoreError>;
   readonly stop: Effect.Effect<void>;
   readonly cancelLogin: Effect.Effect<void>;
@@ -153,6 +157,26 @@ export const BridgeLive = Layer.effect(
     const loginFiber = yield* Ref.make(Option.none<Fiber.Fiber<WeixinAuth, LoginError>>());
     const lastError = yield* Ref.make(Option.none<string>());
     const lifecycle = yield* Semaphore.make(1);
+    const statusInvalidations = yield* PubSub.unbounded<void>({ replay: 1 });
+
+    const status: BridgeService["status"] = Effect.gen(function* () {
+      const state = yield* store.read;
+      const running = Option.isSome(yield* Ref.get(bridgeFiber));
+      const error = yield* Ref.get(lastError);
+      return {
+        running,
+        enabled: state.enabled,
+        authenticated: state.auth !== undefined,
+        ...(state.auth ? { accountId: state.auth.accountId } : {}),
+        ...(state.binding ? { sessionId: state.binding.sessionId } : {}),
+        ...(Option.isSome(error) ? { lastError: error.value } : {}),
+      };
+    });
+    const invalidateStatus = PubSub.publish(statusInvalidations, undefined).pipe(Effect.asVoid);
+    const statusChanges = Stream.fromPubSub(statusInvalidations).pipe(
+      Stream.mapEffect(() => Effect.exit(status)),
+    );
+    yield* invalidateStatus;
 
     const iteration = Effect.gen(function* () {
       const state = yield* store.read;
@@ -165,11 +189,13 @@ export const BridgeLive = Layer.effect(
       const response = yield* transport.getUpdates(state.auth, state.cursor);
       yield* processUpdateBatch(response, { store, transport, gateway });
       yield* Ref.set(lastError, Option.none());
+      yield* invalidateStatus;
     });
 
     const loop = iteration.pipe(
       Effect.catch((error) =>
         Ref.set(lastError, Option.some(describeError(error))).pipe(
+          Effect.andThen(invalidateStatus),
           Effect.andThen(Effect.sleep("3 seconds")),
         ),
       ),
@@ -186,7 +212,7 @@ export const BridgeLive = Layer.effect(
         ),
       );
 
-    const start = lifecycle.withPermits(1)(
+    const startRaw = lifecycle.withPermits(1)(
       Effect.gen(function* () {
         if (Option.isSome(yield* Ref.get(bridgeFiber))) return false;
         const state = yield* store.read;
@@ -199,51 +225,47 @@ export const BridgeLive = Layer.effect(
 
     const stopBridge = lifecycle.withPermits(1)(stopFiber(bridgeFiber));
     const cancelLogin = stopFiber(loginFiber);
-    const stop = Effect.all([cancelLogin, stopBridge], { discard: true });
+    const stopRaw = Effect.all([cancelLogin, stopBridge], { discard: true });
+    const observeStatus = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(Effect.ensuring(invalidateStatus));
 
     const service: BridgeService = {
-      status: Effect.gen(function* () {
-        const state = yield* store.read;
-        const running = Option.isSome(yield* Ref.get(bridgeFiber));
-        const error = yield* Ref.get(lastError);
-        return {
-          running,
-          enabled: state.enabled,
-          authenticated: state.auth !== undefined,
-          ...(state.auth ? { accountId: state.auth.accountId } : {}),
-          ...(state.binding ? { sessionId: state.binding.sessionId } : {}),
-          ...(Option.isSome(error) ? { lastError: error.value } : {}),
-        };
-      }),
-      start,
-      stop,
+      status,
+      statusChanges,
+      start: observeStatus(startRaw),
+      stop: observeStatus(stopRaw),
       cancelLogin,
       loginAndBind: (callbacks, binding) =>
-        Effect.gen(function* () {
-          yield* cancelLogin;
-          const login = Effect.gen(function* () {
-            const auth = yield* transport.login(callbacks);
-            yield* store.saveAuth(auth);
-            yield* store.bind(binding);
-            yield* start;
-            return auth;
-          });
-          const fiber = yield* Effect.forkDetach(login);
-          yield* Ref.set(loginFiber, Option.some(fiber));
-          return yield* Fiber.join(fiber).pipe(
-            Effect.ensuring(
-              Ref.update(loginFiber, (current) =>
-                Option.isSome(current) && current.value === fiber ? Option.none() : current,
+        observeStatus(
+          Effect.gen(function* () {
+            yield* cancelLogin;
+            const login = Effect.gen(function* () {
+              const auth = yield* transport.login(callbacks);
+              yield* store.saveAuth(auth);
+              yield* store.bind(binding);
+              yield* startRaw;
+              return auth;
+            });
+            const fiber = yield* Effect.forkDetach(login);
+            yield* Ref.set(loginFiber, Option.some(fiber));
+            return yield* Fiber.join(fiber).pipe(
+              Effect.ensuring(
+                Ref.update(loginFiber, (current) =>
+                  Option.isSome(current) && current.value === fiber ? Option.none() : current,
+                ),
               ),
-            ),
-          );
-        }),
-      bind: (binding) => store.bind(binding).pipe(Effect.andThen(start), Effect.asVoid),
+            );
+          }),
+        ),
+      bind: (binding) =>
+        observeStatus(store.bind(binding).pipe(Effect.andThen(startRaw), Effect.asVoid)),
       setEnabled: (enabled) =>
-        enabled
-          ? store.setEnabled(true).pipe(Effect.andThen(start), Effect.asVoid)
-          : stop.pipe(Effect.andThen(store.setEnabled(false)), Effect.asVoid),
-      logout: stop.pipe(Effect.andThen(store.logout), Effect.asVoid),
+        observeStatus(
+          enabled
+            ? store.setEnabled(true).pipe(Effect.andThen(startRaw), Effect.asVoid)
+            : stopRaw.pipe(Effect.andThen(store.setEnabled(false)), Effect.asVoid),
+        ),
+      logout: observeStatus(stopRaw.pipe(Effect.andThen(store.logout), Effect.asVoid)),
     };
     return service;
   }),
