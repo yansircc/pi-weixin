@@ -11,21 +11,29 @@ const running = (sessionId: string): BridgeStatus => ({
 
 it("shows the connection only on the bound session", () => {
   const status = running("session-a");
-  expect(projectSessionStatus(status, "session-a")).toBe("微信已连接");
-  expect(projectSessionStatus(status, "session-b")).toBeUndefined();
+  expect(projectSessionStatus(status, "session-a")).toEqual({
+    kind: "pi-weixin/status",
+    version: 1,
+    connected: true,
+  });
+  expect(projectSessionStatus(status, "session-b")).toEqual({
+    kind: "pi-weixin/status",
+    version: 1,
+    connected: false,
+  });
 });
 
 it("moves the connection projection when the binding changes", () => {
   const before = running("session-a");
   const after = running("session-b");
 
-  expect(projectSessionStatus(before, "session-a")).toBe("微信已连接");
-  expect(projectSessionStatus(before, "session-b")).toBeUndefined();
-  expect(projectSessionStatus(after, "session-a")).toBeUndefined();
-  expect(projectSessionStatus(after, "session-b")).toBe("微信已连接");
+  expect(projectSessionStatus(before, "session-a").connected).toBe(true);
+  expect(projectSessionStatus(before, "session-b").connected).toBe(false);
+  expect(projectSessionStatus(after, "session-a").connected).toBe(false);
+  expect(projectSessionStatus(after, "session-b").connected).toBe(true);
 });
 
-it("clears the projection when the bridge stops", () => {
+it("projects disconnected when the bridge stops or status cannot be read", () => {
   expect(
     projectSessionStatus(
       {
@@ -33,6 +41,7 @@ it("clears the projection when the bridge stops", () => {
         running: false,
       },
       "session-a",
-    ),
-  ).toBeUndefined();
+    ).connected,
+  ).toBe(false);
+  expect(projectSessionStatus(undefined, "session-a").connected).toBe(false);
 });

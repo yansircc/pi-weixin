@@ -8,7 +8,7 @@ import QRCode from "qrcode";
 import { Bridge, type BridgeStatus } from "../src/bridge.ts";
 import { BridgeConfigurationError, QrCodeError } from "../src/errors.ts";
 import { getPiWeixinRuntime } from "../src/runtime.ts";
-import { projectSessionStatus } from "../src/session-status.ts";
+import { publishSessionStatus, projectSessionStatus } from "../src/session-status.ts";
 
 interface ImageWidgetUi {
   setImageWidget?: (
@@ -171,14 +171,14 @@ export default function weixinExtension(pi: ExtensionAPI): void {
         const fiber = yield* bridge.statusChanges.pipe(
           Stream.map(
             Exit.match({
-              onFailure: () => undefined,
+              onFailure: () => projectSessionStatus(undefined, sessionId),
               onSuccess: (status) => projectSessionStatus(status, sessionId),
             }),
           ),
-          Stream.changes,
-          Stream.runForEach((text) =>
+          Stream.changesWith((previous, current) => previous.connected === current.connected),
+          Stream.runForEach((status) =>
             Effect.sync(() => {
-              ctx.ui.setStatus("weixin", text);
+              publishSessionStatus(ctx.ui, status);
             }),
           ),
           Effect.forkDetach,
