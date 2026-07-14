@@ -21,7 +21,6 @@ it.effect("gateway submits a blocking prompt to the loopback pi-web host", () =>
     expect(captured?.body).toEqual({
       type: "prompt_and_wait",
       message: "hello",
-      chromeRun: { mode: "none" },
     });
   }),
 );

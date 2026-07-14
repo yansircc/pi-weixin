@@ -45,7 +45,6 @@ export const makePiGateway = (
               body: {
                 type: "prompt_and_wait",
                 message,
-                chromeRun: { mode: "none" },
               },
             })
             .pipe(Effect.mapError((cause) => new GatewayError({ sessionId, cause })));
