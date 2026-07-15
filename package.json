@@ -4,6 +4,7 @@
   "description": "Weixin iLink bridge for Pi sessions hosted by pi-web",
   "keywords": [
     "ilink",
+    "pi-extension",
     "pi-package",
     "weixin"
   ],
@@ -18,9 +19,7 @@
     "url": "git+https://github.com/yansircc/pi-weixin.git"
   },
   "files": [
-    "dist/pi",
-    "README.md",
-    "LICENSE"
+    "dist/pi"
   ],
   "type": "module",
   "publishConfig": {
@@ -28,17 +27,19 @@
   },
   "scripts": {
     "prepare": "effect-tsgo patch",
-    "build": "vp run ci:build",
-    "bundle:check": "vp run ci:bundle",
     "check": "vp check",
-    "distribution:check": "vp run ci:distribution",
-    "archive:check": "node scripts/verify-distribution.ts archive",
     "effect:scan": "vp run ci:effect",
-    "pack:plugin": "pnpm pack --out pi-weixin-%v.tgz",
     "test": "vp test",
     "typecheck": "vp run ci:typecheck",
-    "verify": "vp run ci:verify",
-    "prepack": "vp run ci:build && vp run ci:bundle"
+    "verify": "pnpm run repo:verify && pnpm run pi:verify",
+    "repo:verify": "vp run ci:verify",
+    "pi:build": "node scripts/pi-extension/build.mjs",
+    "pi:bundle-check": "node scripts/pi-extension/verify-distribution.mjs bundle",
+    "pi:distribution-check": "node scripts/pi-extension/verify-distribution.mjs package",
+    "pi:verify": "pnpm run pi:build && pnpm run pi:distribution-check",
+    "pi:domain-check": "node scripts/domain/verify-extension.mjs",
+    "release:archive-check": "node scripts/pi-extension/verify-distribution.mjs archive",
+    "release:public-check": "node scripts/pi-extension/verify-distribution.mjs public"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.80.6",
@@ -59,8 +60,10 @@
     "@types/qrcode": "^1.5.6",
     "@yansircc/effect-scan": "0.1.2",
     "acorn": "8.15.0",
+    "cross-spawn": "7.0.6",
     "effect": "4.0.0-beta.98",
     "qrcode": "^1.5.4",
+    "tar": "7.5.20",
     "typescript": "7.0.2",
     "vite-plus": "0.2.4"
   },

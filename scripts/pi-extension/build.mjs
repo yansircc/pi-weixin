@@ -1,27 +1,23 @@
 import { build } from "vite-plus";
-import { isAllowedExternal, readDistributionContract } from "./distribution-contract.ts";
+import config from "./config.mjs";
+import { isAllowedExternal, readDistributionContract } from "./distribution-contract.mjs";
 
 const contract = readDistributionContract();
 
 await build({
   configFile: false,
   root: contract.root,
-  ssr: {
-    noExternal: true,
-  },
+  ssr: { noExternal: true },
   build: {
-    ssr: "extensions/weixin.ts",
+    ssr: config.source,
     target: "node22",
-    outDir: contract.distDirectory,
+    outDir: contract.outputDirectory,
     emptyOutDir: true,
     minify: false,
     sourcemap: false,
     rolldownOptions: {
       external: isAllowedExternal,
-      output: {
-        entryFileNames: contract.outputFileName,
-        format: "esm",
-      },
+      output: { entryFileNames: contract.outputFileName, format: "esm" },
     },
   },
 });

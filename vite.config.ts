@@ -17,18 +17,6 @@ export default defineConfig({
   },
   run: {
     tasks: {
-      "ci:build": {
-        command: "node scripts/build.ts",
-        cache: false,
-      },
-      "ci:bundle": {
-        command: "node scripts/verify-distribution.ts bundle",
-        cache: false,
-      },
-      "ci:distribution": {
-        command: "node scripts/verify-distribution.ts package",
-        cache: false,
-      },
       "ci:typecheck": {
         command: "tsc --noEmit",
         cache: false,
@@ -39,14 +27,7 @@ export default defineConfig({
         cache: false,
       },
       "ci:verify": {
-        command: [
-          "vp check",
-          "vp run ci:typecheck",
-          "vp test",
-          "vp run ci:effect",
-          "vp run ci:build",
-          "vp run ci:distribution",
-        ],
+        command: ["vp check", "vp run ci:typecheck", "vp test", "vp run ci:effect"],
         cache: false,
       },
     },
