@@ -2,7 +2,7 @@ import { defineConfig } from "vite-plus";
 
 export default defineConfig({
   fmt: {
-    ignorePatterns: ["dist/**"],
+    ignorePatterns: ["dist/**", "scripts/release/**"],
   },
   lint: {
     ignorePatterns: ["dist/**"],
@@ -34,7 +34,8 @@ export default defineConfig({
         cache: false,
       },
       "ci:effect": {
-        command: "effect-scan . --strict --output raw-json --profile",
+        command:
+          "effect-scan . --strict --output gate-json --evidence .effect-scan --fail-on-suppression-drift",
         cache: false,
       },
       "ci:verify": {

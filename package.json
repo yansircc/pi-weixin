@@ -32,6 +32,7 @@
     "bundle:check": "vp run ci:bundle",
     "check": "vp check",
     "distribution:check": "vp run ci:distribution",
+    "archive:check": "node scripts/verify-distribution.ts archive",
     "effect:scan": "vp run ci:effect",
     "pack:plugin": "pnpm pack --out pi-weixin-%v.tgz",
     "test": "vp test",

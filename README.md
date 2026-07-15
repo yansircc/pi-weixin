@@ -39,7 +39,7 @@ pnpm build
 
 ## 分发
 
-推送和 pull request 会在 GitHub Actions 中运行完整的 `pnpm verify`。发布新版本时，先更新 `package.json.version` 并合并到 `main`，再为同一提交推送匹配的 `v<version>` tag；CI 验证通过后会自动发布到 npm，并附带 npm provenance。
+推送和 pull request 会在 GitHub Actions 中运行完整的 `pnpm verify`。每次普通 `main` 推送默认发布 patch；提交信息可用唯一的 `Release-Bump: minor` 或 `Release-Bump: major` trailer 覆盖。版本、release commit 与 tag 只由 CI 生成；同一份归档会在 Linux、macOS、Windows 上解包并通过真实 Pi loader 验证后，使用 npm Trusted Publishing 发布并附带 provenance。
 
 生成可直接交付的压缩包：
 

@@ -107,15 +107,18 @@ const verifyWithPiLoader = async (packageRoot: string): Promise<void> => {
   assert.ok(extension.handlers.has("session_shutdown"), "bundle did not register session_shutdown");
 };
 
-const verifyPackage = async (): Promise<void> => {
+const verifyPackage = async (archiveInput?: string): Promise<void> => {
   const temporary = mkdtempSync(join(tmpdir(), "pi-weixin-package-"));
   try {
-    const archive = join(temporary, "pi-weixin.tgz");
+    const archive =
+      archiveInput === undefined ? join(temporary, "pi-weixin.tgz") : resolve(archiveInput);
     const extracted = join(temporary, "extracted");
-    execFileSync("pnpm", ["--config.ignore-scripts=true", "pack", "--out", archive], {
-      cwd: projectRoot,
-      stdio: "pipe",
-    });
+    if (archiveInput === undefined) {
+      execFileSync("pnpm", ["--config.ignore-scripts=true", "pack", "--out", archive], {
+        cwd: projectRoot,
+        stdio: "pipe",
+      });
+    }
     mkdirSync(extracted, { recursive: true });
     execFileSync("tar", ["-xzf", archive, "-C", extracted]);
 
@@ -136,8 +139,18 @@ const verifyPackage = async (): Promise<void> => {
 };
 
 const mode = process.argv[2];
-assert.ok(mode === "bundle" || mode === "package", "usage: verify-distribution.ts bundle|package");
+assert.ok(
+  mode === "bundle" || mode === "package" || mode === "archive",
+  "usage: verify-distribution.ts bundle|package|archive <archive>",
+);
 
-const contract = readDistributionContract();
-verifyBundle(contract);
-if (mode === "package") await verifyPackage();
+if (mode === "archive") {
+  const archiveArguments = process.argv.slice(3);
+  if (archiveArguments[0] === "--") archiveArguments.shift();
+  assert.equal(archiveArguments.length, 1, "archive mode requires exactly one archive path");
+  await verifyPackage(archiveArguments[0]);
+} else {
+  const contract = readDistributionContract();
+  verifyBundle(contract);
+  if (mode === "package") await verifyPackage();
+}
