@@ -39,6 +39,8 @@ pnpm build
 
 ## 分发
 
+推送和 pull request 会在 GitHub Actions 中运行完整的 `pnpm verify`。发布新版本时，先更新 `package.json.version` 并合并到 `main`，再为同一提交推送匹配的 `v<version>` tag；CI 验证通过后会自动发布到 npm，并附带 npm provenance。
+
 生成可直接交付的压缩包：
 
 ```bash
