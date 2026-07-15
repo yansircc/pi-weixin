@@ -8,7 +8,14 @@ import {
 const status = (connected: boolean): WeixinStatusProjection => ({
   kind: "pi-weixin/status",
   version: 2,
-  bindings: [{ sessionId: "session-a", accountId: "wx-bot-1", connected }],
+  bindings: [
+    {
+      sessionId: "session-a",
+      accountId: "wx-bot-1",
+      connected,
+      phase: connected ? "Connected" : "Stopped",
+    },
+  ],
 });
 
 it("publishes structured connection state when the host supports it", () => {
@@ -26,7 +33,7 @@ it("publishes structured connection state when the host supports it", () => {
   expect(text).toEqual([]);
 });
 
-it("keeps the text status as a compatibility projection for terminal hosts", () => {
+it("publishes the text projection through Pi's public terminal UI contract", () => {
   const text: Array<string | undefined> = [];
   const ui: WeixinStatusUi = {
     setStatus: (_key, value) => text.push(value),

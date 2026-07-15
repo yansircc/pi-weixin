@@ -8,7 +8,7 @@ export default defineConfig({
     ignorePatterns: ["dist/**"],
     options: {
       typeAware: true,
-      // tsc owns Effect language-service diagnostics.
+      // The @effect/tsgo-patched compiler owns Effect diagnostics.
       typeCheck: false,
     },
   },

@@ -7,6 +7,7 @@ import { Effect, Exit, Fiber, Option, Ref, Semaphore, Stream } from "effect";
 import QRCode from "qrcode";
 import { Bridge, type BridgeStatus } from "../src/bridge.ts";
 import { BridgeConfigurationError, QrCodeError } from "../src/errors.ts";
+import type { LoginEvent } from "../src/ilink.ts";
 import { getPiWeixinRuntime } from "../src/runtime.ts";
 import {
   publishSessionStatus,
@@ -36,7 +37,14 @@ const bindingFrom = (ctx: ExtensionContext) => ({
 });
 
 const formatStatus = (status: BridgeStatus): string => {
-  const state = status.running ? "运行中" : status.enabled ? "等待启动" : "已停止";
+  const labels: Record<BridgeStatus["connection"]["_tag"], string> = {
+    Stopped: status.enabled ? "等待启动" : "已停止",
+    Connecting: "正在连接",
+    Connected: "运行中",
+    Retrying: "连接重试中",
+    ReauthenticationRequired: "需要重新登录",
+  };
+  const state = labels[status.connection._tag];
   const account = status.accountId ? `，微信 ${status.accountId}` : "，未登录";
   const session = status.sessionId ? `，session ${status.sessionId}` : "，未绑定 session";
   const error = status.lastError ? `，错误：${status.lastError}` : "";
@@ -56,6 +64,19 @@ const login = (ctx: ExtensionCommandContext) =>
     }
     const bridge = yield* Bridge;
     const imageUi = ctx.ui as typeof ctx.ui & ImageWidgetUi;
+    const eventMessages: Record<LoginEvent["_tag"], (event: LoginEvent) => string> = {
+      AwaitingScan: () => "等待微信扫码",
+      Scanned: () => "已扫码，请在微信确认",
+      AwaitingVerifyCode: (event) =>
+        event._tag === "AwaitingVerifyCode" && event.retry
+          ? "配对码不匹配，请重新输入"
+          : "微信要求输入配对码",
+      VerifyCodeAccepted: () => "配对码已接受，请在微信确认",
+      QrRefreshed: () => "二维码已刷新，请重新扫码",
+      Redirected: () => "已切换到微信区域节点",
+      PollingRetry: () => "微信登录连接波动，正在重试",
+      AlreadyConnected: () => "该微信账号已连接，正在复用本地凭证",
+    };
     const callbacks = {
       onQr: (content: string) =>
         ctx.mode === "tui"
@@ -104,7 +125,20 @@ const login = (ctx: ExtensionCommandContext) =>
                 );
               });
             }),
-      onStatus: (message: string) => Effect.sync(() => ctx.ui.notify(message, "info")),
+      onEvent: (event: LoginEvent) =>
+        Effect.sync(() => ctx.ui.notify(eventMessages[event._tag](event), "info")),
+      requestVerifyCode: (retry: boolean) =>
+        Effect.tryPromise({
+          try: () =>
+            ctx.ui.input(retry ? "配对码不匹配，请重新输入" : "输入手机微信显示的配对码", "配对码"),
+          catch: (cause) => new QrCodeError({ cause }),
+        }).pipe(
+          Effect.flatMap((value) =>
+            value
+              ? Effect.succeed(value)
+              : Effect.fail(new BridgeConfigurationError({ reason: "微信配对码输入已取消" })),
+          ),
+        ),
     };
     const auth = yield* bridge
       .loginAndBind(callbacks, bindingFrom(ctx))

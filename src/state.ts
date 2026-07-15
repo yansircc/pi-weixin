@@ -7,8 +7,8 @@ import {
   type WeixinAuth,
 } from "./schema.ts";
 
-export const EMPTY_STATE: BridgeState = {
-  version: 1,
+const EMPTY_STATE: BridgeState = {
+  version: 2,
   enabled: false,
   cursor: "",
   processedMessageIds: [],
@@ -19,6 +19,7 @@ export interface StateStore {
   readonly read: Effect.Effect<BridgeState, StateStoreError>;
   readonly write: (state: BridgeState) => Effect.Effect<void, StateStoreError>;
   readonly saveAuth: (auth: WeixinAuth) => Effect.Effect<BridgeState, StateStoreError>;
+  readonly clearAuth: Effect.Effect<BridgeState, StateStoreError>;
   readonly bind: (binding: SessionBinding) => Effect.Effect<BridgeState, StateStoreError>;
   readonly setEnabled: (enabled: boolean) => Effect.Effect<BridgeState, StateStoreError>;
   readonly markProcessed: (messageId: string) => Effect.Effect<BridgeState, StateStoreError>;
@@ -97,6 +98,14 @@ export const makeStateStore = (
           cursor: "",
           processedMessageIds: [],
         })),
+      clearAuth: update((state) => {
+        const { auth: _auth, ...withoutAuth } = state;
+        return {
+          ...withoutAuth,
+          cursor: "",
+          processedMessageIds: [],
+        };
+      }),
       bind: (binding) => update((state) => ({ ...state, binding, enabled: true })),
       setEnabled: (enabled) => update((state) => ({ ...state, enabled })),
       markProcessed: (messageId) =>

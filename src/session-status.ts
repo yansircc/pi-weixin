@@ -8,6 +8,8 @@ export type WeixinStatusProjection = Readonly<{
       sessionId: string;
       accountId?: string;
       connected: boolean;
+      phase: BridgeStatus["connection"]["_tag"];
+      error?: string;
     }>
   >;
 }>;
@@ -25,7 +27,9 @@ export const projectSessionStatus = (status: BridgeStatus | undefined): WeixinSt
         {
           sessionId: status.sessionId,
           ...(status.accountId ? { accountId: status.accountId } : {}),
-          connected: status.running,
+          connected: status.connection._tag === "Connected",
+          phase: status.connection._tag,
+          ...(status.lastError ? { error: status.lastError } : {}),
         },
       ]
     : [],
@@ -42,7 +46,9 @@ export const sameSessionStatus = (
     return (
       candidate !== undefined &&
       binding.accountId === candidate.accountId &&
-      binding.connected === candidate.connected
+      binding.connected === candidate.connected &&
+      binding.phase === candidate.phase &&
+      binding.error === candidate.error
     );
   });
 };
@@ -56,9 +62,8 @@ export const publishSessionStatus = (
     ui.setStructuredStatus("weixin", status);
     return;
   }
-  // Pi's public Extension UI contract currently exposes only setStatus. Keep this
-  // terminal-host projection until structured statuses are standardized by Pi
-  // and every supported host implements that contract.
+  // Pi's public Extension UI contract exposes setStatus; pi-web additionally
+  // consumes the structured projection.
   const binding = status.bindings.find((candidate) => candidate.sessionId === currentSessionId);
   ui.setStatus("weixin", binding ? (binding.connected ? "微信已连接" : "微信未连接") : undefined);
 };

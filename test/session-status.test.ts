@@ -8,6 +8,7 @@ const running = (sessionId: string): BridgeStatus => ({
   authenticated: true,
   accountId: "wx-bot-1",
   sessionId,
+  connection: { _tag: "Connected" },
 });
 
 it("shows the connection only on the bound session", () => {
@@ -15,7 +16,14 @@ it("shows the connection only on the bound session", () => {
   expect(projectSessionStatus(status)).toEqual({
     kind: "pi-weixin/status",
     version: 2,
-    bindings: [{ sessionId: "session-a", accountId: "wx-bot-1", connected: true }],
+    bindings: [
+      {
+        sessionId: "session-a",
+        accountId: "wx-bot-1",
+        connected: true,
+        phase: "Connected",
+      },
+    ],
   });
 });
 
@@ -32,6 +40,7 @@ it("projects disconnected when the bridge stops or status cannot be read", () =>
     projectSessionStatus({
       ...running("session-a"),
       running: false,
+      connection: { _tag: "Stopped" },
     }).bindings[0]?.connected,
   ).toBe(false);
   expect(projectSessionStatus(undefined).bindings).toEqual([]);
@@ -42,8 +51,8 @@ it("compares bindings by identity rather than projection order", () => {
     kind: "pi-weixin/status" as const,
     version: 2 as const,
     bindings: [
-      { sessionId: "session-a", accountId: "wx-a", connected: true },
-      { sessionId: "session-b", accountId: "wx-b", connected: false },
+      { sessionId: "session-a", accountId: "wx-a", connected: true, phase: "Connected" as const },
+      { sessionId: "session-b", accountId: "wx-b", connected: false, phase: "Stopped" as const },
     ],
   };
   expect(sameSessionStatus(left, { ...left, bindings: [...left.bindings].reverse() })).toBe(true);
