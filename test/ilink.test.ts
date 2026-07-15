@@ -1,6 +1,7 @@
 import { createCipheriv } from "node:crypto";
 import { expect, it } from "@effect/vitest";
 import { Effect, Stream } from "effect";
+import packageMetadata from "../package.json" with { type: "json" };
 import { makeIlinkClient, type LoginEvent } from "../src/ilink.ts";
 import {
   ILINK_APP_CLIENT_VERSION,
@@ -11,6 +12,8 @@ import {
 } from "../src/ilink-protocol.ts";
 import type { JsonHttpClient, JsonHttpRequest } from "../src/http.ts";
 import type { WeixinAuth } from "../src/schema.ts";
+
+const expectedBotAgent = `pi-weixin/${packageMetadata.version}`;
 
 const auth: WeixinAuth = {
   token: "known-token",
@@ -55,7 +58,7 @@ it.effect("derives iLink client metadata from the package version", () =>
   Effect.gen(function* () {
     expect(ILINK_APP_ID).toBe("bot");
     expect(ILINK_CHANNEL_VERSION).toBe("2.4.6");
-    expect(ILINK_BOT_AGENT).toBe("pi-weixin/0.0.1");
+    expect(ILINK_BOT_AGENT).toBe(expectedBotAgent);
     expect(yield* ILINK_APP_CLIENT_VERSION).toBe(0x0002_0406);
     expect(yield* encodeIlinkClientVersion("2.4.6")).toBe(0x0002_0406);
     expect((yield* encodeIlinkClientVersion("2.4").pipe(Effect.flip))._tag).toBe(
@@ -163,7 +166,7 @@ it.effect("uses the shared request algebra for polling, typing, and presence", (
     ]);
     expect(requests[0]?.body).toEqual({
       get_updates_buf: "cursor",
-      base_info: { channel_version: "2.4.6", bot_agent: "pi-weixin/0.0.1" },
+      base_info: { channel_version: "2.4.6", bot_agent: expectedBotAgent },
     });
     expect(requests[2]?.body).toMatchObject({ status: 1 });
     expect(requests[3]?.body).toMatchObject({ status: 2 });

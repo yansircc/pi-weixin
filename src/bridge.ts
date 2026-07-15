@@ -379,7 +379,7 @@ export interface BridgeService {
   readonly logout: Effect.Effect<void, StateStoreError>;
 }
 
-export class Bridge extends Context.Service<Bridge, BridgeService>()("@agegr/pi-weixin/Bridge") {}
+export class Bridge extends Context.Service<Bridge, BridgeService>()("pi-weixin/Bridge") {}
 
 const describeError = (error: BridgeLoopError): string => error._tag;
 

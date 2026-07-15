@@ -17,6 +17,7 @@ export interface DistributionContract {
   readonly entryRelative: string;
   readonly entryAbsolute: string;
   readonly outputFileName: string;
+  readonly publishedRootFiles: readonly string[];
 }
 
 export const projectRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -41,10 +42,17 @@ export const readDistributionContract = (root = projectRoot): DistributionContra
     entryRelative.startsWith("dist/") && entryRelative.endsWith(".js"),
     "Pi extension entry must be a JavaScript file under dist/",
   );
+  const extensionDirectory = dirname(entryRelative);
+  const publishedFiles = manifest.files ?? [];
+  assert.ok(
+    publishedFiles.includes(extensionDirectory),
+    "package files must publish the Pi extension directory",
+  );
+  const publishedRootFiles = publishedFiles.filter((path) => path !== extensionDirectory);
   assert.deepEqual(
-    manifest.files,
-    [dirname(entryRelative), "README.md"],
-    "package files must publish only the extension directory and README.md",
+    publishedRootFiles,
+    ["README.md", "LICENSE"],
+    "package files must publish only standard root documentation beside the extension",
   );
 
   const distDirectory = resolve(root, "dist");
@@ -57,5 +65,6 @@ export const readDistributionContract = (root = projectRoot): DistributionContra
     entryRelative,
     entryAbsolute,
     outputFileName: relative(distDirectory, entryAbsolute),
+    publishedRootFiles,
   };
 };

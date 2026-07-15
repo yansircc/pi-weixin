@@ -1,10 +1,16 @@
-# pi-weixin MVP
+# pi-weixin
 
 通过腾讯 iLink 把一个微信账号绑定到一个由 pi-web 托管的 Pi session。微信和 Web 写入同一份 Pi session 文件。当前连接层以腾讯 `@tencent-weixin/openclaw-weixin@2.4.6` 的 iLink wire contract 为兼容基线。
 
 ## 安装
 
-开发态可从 pi-web 的插件设置安装本地目录：
+通过 npm 安装公开 Pi package：
+
+```bash
+pi install npm:@yansircc/pi-weixin
+```
+
+开发态也可从 pi-web 的插件设置安装本地目录：
 
 ```text
 /Users/yansir/code/52/pi-weixin
@@ -45,7 +51,7 @@ pnpm pack:plugin
 
 ```bash
 mkdir -p "$HOME/pi-plugins/pi-weixin"
-tar -xzf pi-weixin-0.0.1.tgz \
+tar -xzf pi-weixin-0.0.2.tgz \
   -C "$HOME/pi-plugins/pi-weixin" \
   --strip-components=1
 ```
@@ -56,7 +62,7 @@ tar -xzf pi-weixin-0.0.1.tgz \
 ~/pi-plugins/pi-weixin
 ```
 
-发布包只包含 `package.json`、`README.md` 和 `dist/pi/extension.js`。
+发布包只包含 `package.json`、`README.md`、`LICENSE` 和 `dist/pi/extension.js`。
 
 ## 命令
 

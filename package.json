@@ -1,17 +1,31 @@
 {
-  "name": "@agegr/pi-weixin",
-  "version": "0.0.1",
+  "name": "@yansircc/pi-weixin",
+  "version": "0.0.2",
   "description": "Weixin iLink bridge for Pi sessions hosted by pi-web",
   "keywords": [
     "ilink",
     "pi-package",
     "weixin"
   ],
+  "homepage": "https://github.com/yansircc/pi-weixin#readme",
+  "bugs": {
+    "url": "https://github.com/yansircc/pi-weixin/issues"
+  },
+  "license": "MIT",
+  "author": "yansircc",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yansircc/pi-weixin.git"
+  },
   "files": [
     "dist/pi",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "prepare": "effect-tsgo patch",
     "build": "vp run ci:build",

@@ -124,7 +124,7 @@ const verifyPackage = async (): Promise<void> => {
     verifyBundle(contract);
     assert.deepEqual(
       listFiles(packageRoot),
-      ["README.md", contract.entryRelative, "package.json"].sort(),
+      [...contract.publishedRootFiles, contract.entryRelative, "package.json"].sort(),
       "tarball contains files outside the distribution contract",
     );
     assert.equal(existsSync(join(packageRoot, "node_modules")), false);
