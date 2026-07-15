@@ -1,6 +1,7 @@
 import {
   Config,
   Context,
+  Clock,
   Deferred,
   Effect,
   Exit,
@@ -21,7 +22,6 @@ import {
   GatewayError,
   GatewayIdempotencyConflictError,
   HttpRequestError,
-  IlinkMediaError,
   IlinkProtocolError,
   IlinkSessionExpiredError,
   QrCodeError,
@@ -30,7 +30,7 @@ import {
 import { DEFAULT_PI_WEB_BASE_URL, makePiGateway, type PiGateway } from "./gateway.ts";
 import { makeJsonHttpClient } from "./http.ts";
 import { makeIlinkClient, type LoginCallbacks, type WeixinTransport } from "./ilink.ts";
-import { IlinkMessageSchema, type UpdatesResponse } from "./ilink-protocol.ts";
+import { IlinkMessageSchema, type IlinkImage, type UpdatesResponse } from "./ilink-protocol.ts";
 import {
   messageIdentity,
   parseInboundMessage,
@@ -39,7 +39,7 @@ import {
   replyClientId,
   splitTextReply,
 } from "./message.ts";
-import { type SessionBinding, type WeixinAuth } from "./schema.ts";
+import { type PendingImageBatch, type SessionBinding, type WeixinAuth } from "./schema.ts";
 import { makeStateStore, type StateStore } from "./state.ts";
 
 const UNSUPPORTED_MESSAGE_REPLY = "当前 pi-weixin 仅支持文本和图片消息。";
@@ -48,6 +48,16 @@ const VOICE_TRANSCRIPTION_UNAVAILABLE_REPLY =
 const MEDIA_ERROR_REPLY = "图片下载或解密失败，请重新发送原图。";
 const IDEMPOTENCY_CONFLICT_REPLY =
   "上一条请求的执行状态无法安全确认。为避免重复执行，已停止自动重试；请检查 Pi 会话后重新发送。";
+export const IMAGE_BATCH_WAIT_MILLIS = 30_000;
+
+export const imageAwarePollTimeout = (
+  serverTimeoutMs: number,
+  pending: PendingImageBatch | undefined,
+  now: number,
+): number =>
+  pending?._tag === "Collecting"
+    ? Math.max(1, Math.min(serverTimeoutMs, pending.deadlineAt - now))
+    : serverTimeoutMs;
 
 export interface BridgeStatus {
   readonly running: boolean;
@@ -80,6 +90,120 @@ type BatchError =
   | GatewayError
   | GatewayIdempotencyConflictError;
 
+type PromptDispatch = Readonly<{
+  sessionId: string;
+  userId: string;
+  requestId: string;
+  prompt: string;
+  images: ReadonlyArray<IlinkImage>;
+  contextToken: string;
+}>;
+
+const dispatchPrompt = (
+  input: PromptDispatch,
+  auth: WeixinAuth,
+  transport: WeixinTransport,
+  gateway: PiGateway,
+): Effect.Effect<void, BatchError> =>
+  Effect.gen(function* () {
+    const prepared = yield* Effect.forEach(input.images, transport.downloadImage, {
+      concurrency: 2,
+    }).pipe(
+      Effect.map((images) => ({ _tag: "Ready" as const, images })),
+      Effect.catchTag("IlinkMediaError", () => Effect.succeed({ _tag: "Rejected" as const })),
+    );
+    if (prepared._tag === "Rejected") {
+      yield* transport.sendText(
+        auth,
+        input.userId,
+        MEDIA_ERROR_REPLY,
+        input.contextToken,
+        replyClientId(input.requestId, 0),
+      );
+      return;
+    }
+
+    const typing = yield* transport.startTyping(auth, input.userId, input.contextToken).pipe(
+      Effect.map(Option.some),
+      Effect.catch((error) =>
+        error._tag === "IlinkSessionExpiredError"
+          ? Effect.fail(error)
+          : Effect.logWarning("微信输入状态启动失败", { error: error._tag }).pipe(
+              Effect.as(Option.none()),
+            ),
+      ),
+    );
+    const stopTyping: Effect.Effect<void, IlinkSessionExpiredError> = Option.isNone(typing)
+      ? Effect.void
+      : transport
+          .stopTyping(auth, typing.value)
+          .pipe(
+            Effect.catch((error) =>
+              error._tag === "IlinkSessionExpiredError"
+                ? Effect.fail(error)
+                : Effect.logWarning("微信输入状态停止失败", { error: error._tag }),
+            ),
+          );
+    const reply = yield* gateway
+      .promptAndWait(input.sessionId, input.requestId, input.prompt, prepared.images, (event) =>
+        transport.sendText(
+          auth,
+          input.userId,
+          `Pi 正在使用工具：${event.toolName}`,
+          input.contextToken,
+          progressClientId(input.requestId, event.toolCallId),
+        ),
+      )
+      .pipe(
+        Effect.matchEffect({
+          onFailure: (error) => stopTyping.pipe(Effect.andThen(Effect.fail(error))),
+          onSuccess: (value) => stopTyping.pipe(Effect.as(value)),
+        }),
+        Effect.catchTag("GatewayIdempotencyConflictError", () =>
+          Effect.succeed(IDEMPOTENCY_CONFLICT_REPLY),
+        ),
+      );
+    yield* Effect.forEach(
+      splitTextReply(reply),
+      (chunk, chunkIndex) =>
+        transport.sendText(
+          auth,
+          input.userId,
+          chunk,
+          input.contextToken,
+          replyClientId(input.requestId, chunkIndex),
+        ),
+      { concurrency: 1, discard: true },
+    );
+  });
+
+const dispatchPending = (
+  pending: Extract<PendingImageBatch, { readonly _tag: "Dispatching" }>,
+  auth: WeixinAuth,
+  dependencies: BatchDependencies,
+) =>
+  dispatchPrompt(
+    {
+      sessionId: pending.sessionId,
+      userId: pending.userId,
+      requestId: pending.requestId,
+      prompt: pending.prompt,
+      images: pending.images,
+      contextToken: pending.contextToken,
+    },
+    auth,
+    dependencies.transport,
+    dependencies.gateway,
+  ).pipe(
+    Effect.andThen(
+      dependencies.store.transitionInbound({
+        _tag: "CompleteImages",
+        requestId: pending.requestId,
+      }),
+    ),
+    Effect.asVoid,
+  );
+
 export const processUpdateBatch = (
   response: UpdatesResponse,
   dependencies: BatchDependencies,
@@ -95,6 +219,24 @@ export const processUpdateBatch = (
     }
     const auth = initial.auth;
     const binding = initial.binding;
+
+    let ready = initial;
+    if ((response.msgs?.length ?? 0) === 0) {
+      ready = yield* store.transitionInbound({
+        _tag: "ExpireImages",
+        now: yield* Clock.currentTimeMillis,
+      });
+    }
+    if (
+      ready.pendingImageBatch?._tag === "Collecting" &&
+      (ready.pendingImageBatch.sessionId !== binding.sessionId ||
+        ready.pendingImageBatch.userId !== auth.userId)
+    ) {
+      ready = yield* store.transitionInbound({ _tag: "FlushImages" });
+    }
+    if (ready.pendingImageBatch?._tag === "Dispatching") {
+      yield* dispatchPending(ready.pendingImageBatch, auth, dependencies);
+    }
 
     yield* Effect.forEach(
       response.msgs ?? [],
@@ -120,24 +262,8 @@ export const processUpdateBatch = (
 
           const inbound = parseInboundMessage(message);
           const text = renderInboundPrompt(inbound);
-          const prepared = yield* Effect.forEach(
-            inbound.parts.filter((part) => part._tag === "Image"),
-            (part) =>
-              part.image
-                ? transport.downloadImage(part.image)
-                : Effect.fail(
-                    new IlinkMediaError({
-                      operation: "download",
-                      reason: "InvalidReference",
-                      cause: "Image item has no media reference",
-                    }),
-                  ),
-            { concurrency: 2 },
-          ).pipe(
-            Effect.map((images) => ({ _tag: "Ready" as const, images })),
-            Effect.catchTag("IlinkMediaError", () => Effect.succeed({ _tag: "Rejected" as const })),
-          );
-          if (prepared._tag === "Rejected") {
+          const imageParts = inbound.parts.filter((part) => part._tag === "Image");
+          if (imageParts.some((part) => part.image === undefined)) {
             yield* transport.sendText(
               auth,
               fromUserId,
@@ -148,70 +274,83 @@ export const processUpdateBatch = (
             yield* store.markProcessed(id);
             return;
           }
-          const prompt = text ?? (prepared.images.length > 0 ? "请分析这些图片。" : undefined);
+          const images = imageParts.flatMap((part) => (part.image ? [part.image] : []));
+          if (images.length > 0 && text === undefined) {
+            const now = yield* Clock.currentTimeMillis;
+            const collected = yield* store.transitionInbound({
+              _tag: "CollectImages",
+              sessionId: binding.sessionId,
+              userId: fromUserId,
+              messageId: id,
+              images,
+              contextToken: message.context_token ?? "",
+              deadlineAt: now + IMAGE_BATCH_WAIT_MILLIS,
+            });
+            if (!collected.processedMessageIds.includes(id)) {
+              return yield* new IlinkProtocolError({
+                operation: "bridge.collect_images",
+                cause: "pending image batch has a different owner",
+              });
+            }
+            return;
+          }
+
+          const pending = (yield* store.read).pendingImageBatch;
+          if (text !== undefined && (images.length > 0 || pending?._tag === "Collecting")) {
+            const state = yield* store.transitionInbound({
+              _tag: "DispatchImages",
+              sessionId: binding.sessionId,
+              userId: fromUserId,
+              messageId: id,
+              images,
+              contextToken: message.context_token ?? "",
+              prompt: text,
+            });
+            if (state.pendingImageBatch?._tag === "Dispatching") {
+              yield* dispatchPending(state.pendingImageBatch, auth, dependencies);
+            }
+            return;
+          }
+
+          const prompt = text;
           const fallbackReply = inbound.parts.some((part) => part._tag === "Voice")
             ? VOICE_TRANSCRIPTION_UNAVAILABLE_REPLY
             : UNSUPPORTED_MESSAGE_REPLY;
-          const typing = prompt
-            ? yield* transport.startTyping(auth, fromUserId, message.context_token ?? "").pipe(
-                Effect.map(Option.some),
-                Effect.catch((error) =>
-                  error._tag === "IlinkSessionExpiredError"
-                    ? Effect.fail(error)
-                    : Effect.logWarning("微信输入状态启动失败", {
-                        error: error._tag,
-                      }).pipe(Effect.as(Option.none())),
-                ),
-              )
-            : Option.none();
-          const stopTyping: Effect.Effect<void, IlinkSessionExpiredError> = Option.isNone(typing)
-            ? Effect.void
-            : transport.stopTyping(auth, typing.value).pipe(
-                Effect.catch((error) =>
-                  error._tag === "IlinkSessionExpiredError"
-                    ? Effect.fail(error)
-                    : Effect.logWarning("微信输入状态停止失败", {
-                        error: error._tag,
-                      }),
-                ),
-              );
-          const reply = yield* prompt
-            ? gateway
-                .promptAndWait(binding.sessionId, id, prompt, prepared.images, (event) =>
-                  transport.sendText(
-                    auth,
-                    fromUserId,
-                    `Pi 正在使用工具：${event.toolName}`,
-                    message.context_token ?? "",
-                    progressClientId(id, event.toolCallId),
-                  ),
-                )
-                .pipe(
-                  Effect.matchEffect({
-                    onFailure: (error) => stopTyping.pipe(Effect.andThen(Effect.fail(error))),
-                    onSuccess: (value) => stopTyping.pipe(Effect.as(value)),
-                  }),
-                  Effect.catchTag("GatewayIdempotencyConflictError", () =>
-                    Effect.succeed(IDEMPOTENCY_CONFLICT_REPLY),
-                  ),
-                )
-            : Effect.succeed(fallbackReply);
-          yield* Effect.forEach(
-            splitTextReply(reply),
-            (chunk, chunkIndex) =>
-              transport.sendText(
-                auth,
-                fromUserId,
-                chunk,
-                message.context_token ?? "",
-                replyClientId(id, chunkIndex),
-              ),
-            { concurrency: 1, discard: true },
-          );
+          if (prompt) {
+            yield* dispatchPrompt(
+              {
+                sessionId: binding.sessionId,
+                userId: fromUserId,
+                requestId: id,
+                prompt,
+                images: [],
+                contextToken: message.context_token ?? "",
+              },
+              auth,
+              transport,
+              gateway,
+            );
+          } else {
+            yield* transport.sendText(
+              auth,
+              fromUserId,
+              fallbackReply,
+              message.context_token ?? "",
+              replyClientId(id, 0),
+            );
+          }
           yield* store.markProcessed(id);
         }),
       { concurrency: 1, discard: true },
     );
+
+    const expired = yield* store.transitionInbound({
+      _tag: "ExpireImages",
+      now: yield* Clock.currentTimeMillis,
+    });
+    if (expired.pendingImageBatch?._tag === "Dispatching") {
+      yield* dispatchPending(expired.pendingImageBatch, auth, dependencies);
+    }
 
     if (response.get_updates_buf !== undefined) yield* store.saveCursor(response.get_updates_buf);
   }).pipe(Effect.withSpan("pi_weixin.batch.process"));
@@ -299,18 +438,28 @@ export const BridgeLive = Layer.effect(
     yield* invalidateStatus;
 
     const iteration = Effect.gen(function* () {
-      const state = yield* store.read;
+      let state = yield* store.read;
       if (!state.enabled || !state.auth || !state.binding) {
         return yield* new IlinkProtocolError({
           operation: "bridge.loop",
           cause: "bridge is not configured",
         });
       }
-      const response = yield* transport.getUpdates(
-        state.auth,
-        state.cursor,
+      yield* processUpdateBatch({}, { store, transport, gateway });
+      state = yield* store.read;
+      if (!state.auth) {
+        return yield* new IlinkProtocolError({
+          operation: "bridge.loop",
+          cause: "bridge authentication changed during pending dispatch",
+        });
+      }
+      const now = yield* Clock.currentTimeMillis;
+      const timeoutMs = imageAwarePollTimeout(
         yield* Ref.get(pollTimeoutMs),
+        state.pendingImageBatch,
+        now,
       );
+      const response = yield* transport.getUpdates(state.auth, state.cursor, timeoutMs);
       yield* processUpdateBatch(response, { store, transport, gateway });
       if (response.longpolling_timeout_ms !== undefined && response.longpolling_timeout_ms > 0) {
         yield* Ref.set(pollTimeoutMs, response.longpolling_timeout_ms);

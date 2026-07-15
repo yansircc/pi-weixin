@@ -1,7 +1,7 @@
 {
   "name": "@agegr/pi-weixin",
   "version": "0.0.1",
-  "description": "Text-only Weixin iLink bridge for Pi sessions hosted by pi-web",
+  "description": "Weixin iLink bridge for Pi sessions hosted by pi-web",
   "keywords": [
     "ilink",
     "pi-package",

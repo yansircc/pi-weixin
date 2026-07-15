@@ -1,11 +1,37 @@
 import { Clock, Effect, FileSystem, Path, Random, Schema, Semaphore } from "effect";
 import { StateStoreError } from "./errors.ts";
+import type { IlinkImage } from "./ilink-protocol.ts";
+import { messageBatchIdentity } from "./message.ts";
 import {
   BridgeStateJsonSchema,
   type BridgeState,
+  type PendingImageBatch,
   type SessionBinding,
   type WeixinAuth,
 } from "./schema.ts";
+
+export type InboundStateEvent =
+  | {
+      readonly _tag: "CollectImages";
+      readonly sessionId: string;
+      readonly userId: string;
+      readonly messageId: string;
+      readonly images: ReadonlyArray<IlinkImage>;
+      readonly contextToken: string;
+      readonly deadlineAt: number;
+    }
+  | {
+      readonly _tag: "DispatchImages";
+      readonly sessionId: string;
+      readonly userId: string;
+      readonly messageId: string;
+      readonly images: ReadonlyArray<IlinkImage>;
+      readonly contextToken: string;
+      readonly prompt: string;
+    }
+  | { readonly _tag: "FlushImages" }
+  | { readonly _tag: "ExpireImages"; readonly now: number }
+  | { readonly _tag: "CompleteImages"; readonly requestId: string };
 
 const EMPTY_STATE: BridgeState = {
   version: 2,
@@ -24,6 +50,9 @@ export interface StateStore {
   readonly setEnabled: (enabled: boolean) => Effect.Effect<BridgeState, StateStoreError>;
   readonly markProcessed: (messageId: string) => Effect.Effect<BridgeState, StateStoreError>;
   readonly saveCursor: (cursor: string) => Effect.Effect<BridgeState, StateStoreError>;
+  readonly transitionInbound: (
+    event: InboundStateEvent,
+  ) => Effect.Effect<BridgeState, StateStoreError>;
   readonly logout: Effect.Effect<BridgeState, StateStoreError>;
 }
 
@@ -87,19 +116,138 @@ export const makeStateStore = (
         }),
       );
 
+    const withProcessed = (state: BridgeState, messageId: string): BridgeState =>
+      state.processedMessageIds.includes(messageId)
+        ? state
+        : {
+            ...state,
+            processedMessageIds: [...state.processedMessageIds, messageId].slice(-processedLimit),
+          };
+
+    const appendBatch = (
+      batch: PendingImageBatch | undefined,
+      event: Extract<InboundStateEvent, { readonly _tag: "CollectImages" | "DispatchImages" }>,
+    ) => {
+      const collecting = batch?._tag === "Collecting" ? batch : undefined;
+      const compatible =
+        collecting?.sessionId === event.sessionId && collecting.userId === event.userId;
+      if (batch !== undefined && !compatible) return undefined;
+      const duplicate = collecting?.messageIds.includes(event.messageId) === true;
+      const messageIds = duplicate
+        ? collecting.messageIds
+        : collecting
+          ? [...collecting.messageIds, event.messageId]
+          : [event.messageId];
+      return {
+        messageIds,
+        images: duplicate
+          ? collecting.images
+          : collecting
+            ? [...collecting.images, ...event.images]
+            : [...event.images],
+      };
+    };
+
+    const beginCollectedDispatch = (state: BridgeState): BridgeState => {
+      const pending = state.pendingImageBatch;
+      if (pending?._tag !== "Collecting") return state;
+      return {
+        ...state,
+        pendingImageBatch: {
+          _tag: "Dispatching",
+          sessionId: pending.sessionId,
+          userId: pending.userId,
+          messageIds: pending.messageIds,
+          images: pending.images,
+          contextToken: pending.contextToken,
+          requestId: messageBatchIdentity(pending.messageIds),
+          prompt: pending.images.length === 1 ? "请分析图片。" : "请分析这些图片。",
+        },
+      };
+    };
+
+    const transitionInbound = (event: InboundStateEvent) =>
+      update((state) => {
+        switch (event._tag) {
+          case "CollectImages": {
+            if (state.pendingImageBatch?._tag === "Dispatching") return state;
+            const batch = appendBatch(state.pendingImageBatch, event);
+            if (batch === undefined) return state;
+            return withProcessed(
+              {
+                ...state,
+                pendingImageBatch: {
+                  _tag: "Collecting",
+                  sessionId: event.sessionId,
+                  userId: event.userId,
+                  messageIds: batch.messageIds,
+                  images: batch.images,
+                  contextToken: event.contextToken,
+                  deadlineAt: event.deadlineAt,
+                },
+              },
+              event.messageId,
+            );
+          }
+          case "DispatchImages": {
+            if (state.pendingImageBatch?._tag === "Dispatching") return state;
+            const batch = appendBatch(state.pendingImageBatch, event);
+            if (batch === undefined) return state;
+            if (batch.images.length === 0) return state;
+            const requestId = messageBatchIdentity(batch.messageIds);
+            return withProcessed(
+              {
+                ...state,
+                pendingImageBatch: {
+                  _tag: "Dispatching",
+                  sessionId: event.sessionId,
+                  userId: event.userId,
+                  messageIds: batch.messageIds,
+                  images: batch.images,
+                  contextToken: event.contextToken,
+                  requestId,
+                  prompt: event.prompt,
+                },
+              },
+              event.messageId,
+            );
+          }
+          case "FlushImages":
+            return beginCollectedDispatch(state);
+          case "ExpireImages": {
+            const pending = state.pendingImageBatch;
+            if (pending?._tag !== "Collecting" || event.now < pending.deadlineAt) return state;
+            return beginCollectedDispatch(state);
+          }
+          case "CompleteImages": {
+            if (
+              state.pendingImageBatch?._tag !== "Dispatching" ||
+              state.pendingImageBatch.requestId !== event.requestId
+            ) {
+              return state;
+            }
+            const { pendingImageBatch: _pending, ...complete } = state;
+            return complete;
+          }
+        }
+      });
+
     return {
       path: statePath,
       read,
       write,
       saveAuth: (auth) =>
-        update((state) => ({
-          ...state,
-          auth,
-          cursor: "",
-          processedMessageIds: [],
-        })),
+        update((state) => {
+          const { pendingImageBatch: _pending, ...stable } = state;
+          return {
+            ...stable,
+            auth,
+            cursor: "",
+            processedMessageIds: [],
+          };
+        }),
       clearAuth: update((state) => {
-        const { auth: _auth, ...withoutAuth } = state;
+        const { auth: _auth, pendingImageBatch: _pending, ...withoutAuth } = state;
         return {
           ...withoutAuth,
           cursor: "",
@@ -108,18 +256,9 @@ export const makeStateStore = (
       }),
       bind: (binding) => update((state) => ({ ...state, binding, enabled: true })),
       setEnabled: (enabled) => update((state) => ({ ...state, enabled })),
-      markProcessed: (messageId) =>
-        update((state) =>
-          state.processedMessageIds.includes(messageId)
-            ? state
-            : {
-                ...state,
-                processedMessageIds: [...state.processedMessageIds, messageId].slice(
-                  -processedLimit,
-                ),
-              },
-        ),
+      markProcessed: (messageId) => update((state) => withProcessed(state, messageId)),
       saveCursor: (cursor) => update((state) => ({ ...state, cursor })),
+      transitionInbound,
       logout: write(EMPTY_STATE).pipe(Effect.as(EMPTY_STATE)),
     };
   });

@@ -1,17 +1,59 @@
 import { expect, it } from "@effect/vitest";
 import { Effect } from "effect";
+import { TestClock } from "effect/testing";
 import {
   GatewayIdempotencyConflictError,
   HttpRequestError,
   IlinkMediaError,
   IlinkSessionExpiredError,
 } from "../src/errors.ts";
-import { processUpdateBatch } from "../src/bridge.ts";
+import { imageAwarePollTimeout, processUpdateBatch } from "../src/bridge.ts";
 import type { PiGateway } from "../src/gateway.ts";
 import type { WeixinTransport } from "../src/ilink.ts";
+import { makeStateStore, type StateStore } from "../src/state.ts";
 import { configureStore, withTestStore } from "./runtime.ts";
 
 const unusedLogin: WeixinTransport["login"] = () => Effect.never;
+
+const imageMessage = (messageId: number, imageId: string) => ({
+  message_id: messageId,
+  message_type: 1,
+  from_user_id: "allowed-user",
+  context_token: `context-${messageId}`,
+  item_list: [{ type: 2, image_item: { media: { encrypt_query_param: imageId } } }],
+});
+
+const imageDependencies = (
+  store: StateStore,
+  prompts: Array<{ message: string; images: ReadonlyArray<{ data: string }> }>,
+) =>
+  ({
+    store,
+    gateway: {
+      promptAndWait: (_sessionId, _requestId, message, images) =>
+        Effect.sync(() => {
+          prompts.push({
+            message,
+            images: images.map((image) => ({ data: image.data })),
+          });
+          return "完成";
+        }),
+    },
+    transport: {
+      login: unusedLogin,
+      getUpdates: () => Effect.succeed({}),
+      startTyping: (_auth, userId) => Effect.succeed({ userId, ticket: "ticket" }),
+      stopTyping: () => Effect.void,
+      notifyStart: () => Effect.void,
+      notifyStop: () => Effect.void,
+      downloadImage: (image) =>
+        Effect.succeed({
+          data: image.media?.encrypt_query_param ?? "missing",
+          mimeType: "image/png",
+        }),
+      sendText: () => Effect.void,
+    },
+  }) satisfies { store: StateStore; gateway: PiGateway; transport: WeixinTransport };
 
 it.effect("authorized messages reach Pi once and use deterministic ids for every reply chunk", () =>
   withTestStore((store) =>
@@ -237,7 +279,7 @@ it.effect(
     ),
 );
 
-it.effect("image-only and mixed messages preserve the prompt identity and image payload", () =>
+it.effect("text flushes all collected and inline images as one deterministic batch", () =>
   withTestStore((store) =>
     Effect.gen(function* () {
       yield* configureStore(store);
@@ -294,22 +336,156 @@ it.effect("image-only and mixed messages preserve the prompt identity and image 
         { store, transport, gateway },
       );
 
-      expect(prompts).toEqual([
-        {
-          requestId: "message-45",
-          message: "请分析这些图片。",
-          images: [{ data: "image-only", mimeType: "image/png" }],
-        },
-        {
-          requestId: "message-46",
-          message: "描述图片",
-          images: [{ data: "mixed", mimeType: "image/png" }],
-        },
-      ]);
-      expect(replies).toEqual(["完成", "完成"]);
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]).toMatchObject({
+        message: "描述图片",
+        images: [
+          { data: "image-only", mimeType: "image/png" },
+          { data: "mixed", mimeType: "image/png" },
+        ],
+      });
+      expect(prompts[0]?.requestId).toMatch(/^batch-[a-f0-9]{64}$/);
+      expect(replies).toEqual(["完成"]);
     }),
   ),
 );
+
+it.effect("a single image waits 30 seconds and then uses the exact default prompt", () =>
+  withTestStore((store) =>
+    Effect.gen(function* () {
+      yield* configureStore(store);
+      const prompts: Array<{ message: string; images: ReadonlyArray<{ data: string }> }> = [];
+      const dependencies = imageDependencies(store, prompts);
+
+      yield* processUpdateBatch({ msgs: [imageMessage(50, "one")] }, dependencies);
+      expect(prompts).toEqual([]);
+      yield* TestClock.adjust("29999 millis");
+      yield* processUpdateBatch({}, dependencies);
+      expect(prompts).toEqual([]);
+      yield* TestClock.adjust("1 millis");
+      yield* processUpdateBatch({}, dependencies);
+
+      expect(prompts).toEqual([{ message: "请分析图片。", images: [{ data: "one" }] }]);
+      expect((yield* store.read).pendingImageBatch).toBeUndefined();
+    }),
+  ),
+);
+
+it.effect("each additional image resets the sliding deadline", () =>
+  withTestStore((store) =>
+    Effect.gen(function* () {
+      yield* configureStore(store);
+      const prompts: Array<{ message: string; images: ReadonlyArray<{ data: string }> }> = [];
+      const dependencies = imageDependencies(store, prompts);
+
+      yield* processUpdateBatch({ msgs: [imageMessage(51, "first")] }, dependencies);
+      yield* TestClock.adjust("29 seconds");
+      yield* processUpdateBatch({ msgs: [imageMessage(52, "second")] }, dependencies);
+      yield* TestClock.adjust("29 seconds");
+      yield* processUpdateBatch({}, dependencies);
+      expect(prompts).toEqual([]);
+      yield* TestClock.adjust("1 second");
+      yield* processUpdateBatch({}, dependencies);
+
+      expect(prompts).toEqual([
+        {
+          message: "请分析这些图片。",
+          images: [{ data: "first" }, { data: "second" }],
+        },
+      ]);
+    }),
+  ),
+);
+
+it.effect("a Weixin voice transcript flushes the pending image as its description", () =>
+  withTestStore((store) =>
+    Effect.gen(function* () {
+      yield* configureStore(store);
+      const prompts: Array<{ message: string; images: ReadonlyArray<{ data: string }> }> = [];
+      const dependencies = imageDependencies(store, prompts);
+
+      yield* processUpdateBatch({ msgs: [imageMessage(53, "voice-image")] }, dependencies);
+      yield* processUpdateBatch(
+        {
+          msgs: [
+            {
+              message_id: 54,
+              message_type: 1,
+              from_user_id: "allowed-user",
+              item_list: [{ type: 3, voice_item: { text: "这是补充说明" } }],
+            },
+          ],
+        },
+        dependencies,
+      );
+
+      expect(prompts).toEqual([{ message: "这是补充说明", images: [{ data: "voice-image" }] }]);
+    }),
+  ),
+);
+
+it.effect("an overdue collecting batch resumes from the persisted state after restart", () =>
+  withTestStore((store) =>
+    Effect.gen(function* () {
+      yield* configureStore(store);
+      const prompts: Array<{ message: string; images: ReadonlyArray<{ data: string }> }> = [];
+      yield* processUpdateBatch(
+        { msgs: [imageMessage(55, "persisted")] },
+        imageDependencies(store, prompts),
+      );
+      yield* TestClock.adjust("30 seconds");
+
+      const restartedStore = yield* makeStateStore(store.path);
+      yield* processUpdateBatch({}, imageDependencies(restartedStore, prompts));
+
+      expect(prompts).toEqual([{ message: "请分析图片。", images: [{ data: "persisted" }] }]);
+      expect((yield* restartedStore.read).pendingImageBatch).toBeUndefined();
+    }),
+  ),
+);
+
+it.effect("text at the deadline wins the single batch transition", () =>
+  withTestStore((store) =>
+    Effect.gen(function* () {
+      yield* configureStore(store);
+      const prompts: Array<{ message: string; images: ReadonlyArray<{ data: string }> }> = [];
+      const dependencies = imageDependencies(store, prompts);
+      yield* processUpdateBatch({ msgs: [imageMessage(56, "race")] }, dependencies);
+      yield* TestClock.adjust("30 seconds");
+
+      yield* processUpdateBatch(
+        {
+          msgs: [
+            {
+              message_id: 57,
+              message_type: 1,
+              from_user_id: "allowed-user",
+              item_list: [{ type: 1, text_item: { text: "截止时说明" } }],
+            },
+          ],
+        },
+        dependencies,
+      );
+
+      expect(prompts).toEqual([{ message: "截止时说明", images: [{ data: "race" }] }]);
+    }),
+  ),
+);
+
+it("caps long polling at the remaining image deadline without allowing a zero timeout", () => {
+  const pending = {
+    _tag: "Collecting" as const,
+    sessionId: "session",
+    userId: "user",
+    messageIds: ["message"],
+    images: [],
+    contextToken: "context",
+    deadlineAt: 30_000,
+  };
+  expect(imageAwarePollTimeout(38_000, pending, 1_000)).toBe(29_000);
+  expect(imageAwarePollTimeout(38_000, pending, 30_000)).toBe(1);
+  expect(imageAwarePollTimeout(10_000, pending, 1_000)).toBe(10_000);
+});
 
 it.effect("permanent image errors reply once and become processed", () =>
   withTestStore((store) =>
@@ -353,6 +529,7 @@ it.effect("permanent image errors reply once and become processed", () =>
       };
 
       yield* processUpdateBatch(response, { store, transport, gateway });
+      yield* TestClock.adjust("30 seconds");
       yield* processUpdateBatch(response, { store, transport, gateway });
 
       expect(prompted).toBe(false);
@@ -362,12 +539,36 @@ it.effect("permanent image errors reply once and become processed", () =>
   ),
 );
 
-it.effect("transient image download failures remain unprocessed for retry", () =>
+it.effect("transient image download failures preserve Dispatching for retry", () =>
   withTestStore((store) =>
     Effect.gen(function* () {
       yield* configureStore(store);
       let replied = false;
-      const result = yield* processUpdateBatch(
+      const dependencies = {
+        store,
+        gateway: { promptAndWait: () => Effect.die("Pi must not be prompted") },
+        transport: {
+          login: unusedLogin,
+          getUpdates: () => Effect.succeed({}),
+          startTyping: () => Effect.die("typing must not start"),
+          stopTyping: () => Effect.die("typing must not stop"),
+          notifyStart: () => Effect.void,
+          notifyStop: () => Effect.void,
+          downloadImage: () =>
+            Effect.fail(
+              new HttpRequestError({
+                operation: "ilink.download_image",
+                url: "https://novac2c.cdn.weixin.qq.com/c2c/download",
+                cause: "connection reset",
+              }),
+            ),
+          sendText: () =>
+            Effect.sync(() => {
+              replied = true;
+            }),
+        },
+      } satisfies { store: typeof store; gateway: PiGateway; transport: WeixinTransport };
+      yield* processUpdateBatch(
         {
           msgs: [
             {
@@ -378,35 +579,37 @@ it.effect("transient image download failures remain unprocessed for retry", () =
             },
           ],
         },
-        {
-          store,
-          gateway: { promptAndWait: () => Effect.die("Pi must not be prompted") },
-          transport: {
-            login: unusedLogin,
-            getUpdates: () => Effect.succeed({}),
-            startTyping: () => Effect.die("typing must not start"),
-            stopTyping: () => Effect.die("typing must not stop"),
-            notifyStart: () => Effect.void,
-            notifyStop: () => Effect.void,
-            downloadImage: () =>
-              Effect.fail(
-                new HttpRequestError({
-                  operation: "ilink.download_image",
-                  url: "https://novac2c.cdn.weixin.qq.com/c2c/download",
-                  cause: "connection reset",
-                }),
-              ),
-            sendText: () =>
-              Effect.sync(() => {
-                replied = true;
-              }),
-          },
-        },
-      ).pipe(Effect.exit);
+        dependencies,
+      );
+      yield* TestClock.adjust("30 seconds");
+      const result = yield* processUpdateBatch({}, dependencies).pipe(Effect.exit);
 
       expect(result._tag).toBe("Failure");
       expect(replied).toBe(false);
-      expect((yield* store.read).processedMessageIds).not.toContain("message-48");
+      const state = yield* store.read;
+      expect(state.processedMessageIds).toContain("message-48");
+      expect(state.pendingImageBatch?._tag).toBe("Dispatching");
+      const requestId =
+        state.pendingImageBatch?._tag === "Dispatching"
+          ? state.pendingImageBatch.requestId
+          : undefined;
+      const retriedRequestIds: string[] = [];
+      const recovered = imageDependencies(store, []);
+      yield* processUpdateBatch(
+        {},
+        {
+          ...recovered,
+          gateway: {
+            promptAndWait: (_sessionId, retriedRequestId) =>
+              Effect.sync(() => {
+                retriedRequestIds.push(retriedRequestId);
+                return "恢复成功";
+              }),
+          },
+        },
+      );
+      expect(retriedRequestIds).toEqual([requestId]);
+      expect((yield* store.read).pendingImageBatch).toBeUndefined();
     }),
   ),
 );

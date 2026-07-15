@@ -112,6 +112,9 @@ export function messageIdentity(message: unknown): string {
   return createHash("sha256").update(canonicalJson(message)).digest("hex");
 }
 
+export const messageBatchIdentity = (messageIds: ReadonlyArray<string>): string =>
+  `batch-${createHash("sha256").update(messageIds.join("\0")).digest("hex")}`;
+
 const outboundClientId = (messageId: string, part: string): string => {
   const digest = createHash("sha256").update(`${messageId}\0${part}`).digest("hex");
   return `piw-${digest.slice(0, 32)}`;

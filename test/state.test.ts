@@ -54,6 +54,80 @@ it.effect("clearing stale credentials preserves the session binding and enabled 
   ),
 );
 
+it.effect("collecting the same message twice cannot duplicate its image", () =>
+  withTestStore((store) =>
+    Effect.gen(function* () {
+      const event = {
+        _tag: "CollectImages" as const,
+        sessionId: "session",
+        userId: "user",
+        messageId: "message-1",
+        images: [{ media: { encrypt_query_param: "image-1" } }],
+        contextToken: "context",
+        deadlineAt: 30_000,
+      };
+      yield* store.transitionInbound(event);
+      yield* store.transitionInbound(event);
+
+      const state = yield* store.read;
+      expect(state.pendingImageBatch?._tag).toBe("Collecting");
+      expect(state.pendingImageBatch?.messageIds).toEqual(["message-1"]);
+      expect(state.pendingImageBatch?.images).toHaveLength(1);
+      expect(state.processedMessageIds).toEqual(["message-1"]);
+    }),
+  ),
+);
+
+it.effect("a different batch owner cannot overwrite a durable collecting batch", () =>
+  withTestStore((store) =>
+    Effect.gen(function* () {
+      yield* store.transitionInbound({
+        _tag: "CollectImages",
+        sessionId: "old-session",
+        userId: "user",
+        messageId: "old-message",
+        images: [{ media: { encrypt_query_param: "old-image" } }],
+        contextToken: "old-context",
+        deadlineAt: 30_000,
+      });
+      const state = yield* store.transitionInbound({
+        _tag: "CollectImages",
+        sessionId: "new-session",
+        userId: "user",
+        messageId: "new-message",
+        images: [{ media: { encrypt_query_param: "new-image" } }],
+        contextToken: "new-context",
+        deadlineAt: 31_000,
+      });
+
+      expect(state.pendingImageBatch).toMatchObject({
+        _tag: "Collecting",
+        sessionId: "old-session",
+        messageIds: ["old-message"],
+      });
+      expect(state.processedMessageIds).toEqual(["old-message"]);
+    }),
+  ),
+);
+
+it.effect("clearing auth removes its owned pending image batch", () =>
+  withTestStore((store) =>
+    Effect.gen(function* () {
+      yield* store.transitionInbound({
+        _tag: "CollectImages",
+        sessionId: "session",
+        userId: "user",
+        messageId: "message",
+        images: [{ media: { encrypt_query_param: "image" } }],
+        contextToken: "context",
+        deadlineAt: 30_000,
+      });
+
+      expect((yield* store.clearAuth).pendingImageBatch).toBeUndefined();
+    }),
+  ),
+);
+
 it.effect("rejects the removed v1 state shape instead of migrating it", () =>
   withTestStore((store) =>
     Effect.gen(function* () {

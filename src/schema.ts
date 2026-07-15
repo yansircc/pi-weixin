@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { IlinkImageSchema } from "./ilink-protocol.ts";
 
 const WeixinAuthSchema = Schema.Struct({
   token: Schema.String,
@@ -16,11 +17,33 @@ const SessionBindingSchema = Schema.Struct({
 });
 export type SessionBinding = Schema.Schema.Type<typeof SessionBindingSchema>;
 
+const PendingImageBatchBase = {
+  sessionId: Schema.String,
+  userId: Schema.String,
+  messageIds: Schema.Array(Schema.String),
+  images: Schema.Array(IlinkImageSchema),
+  contextToken: Schema.String,
+};
+
+const PendingImageBatchSchema = Schema.Union([
+  Schema.TaggedStruct("Collecting", {
+    ...PendingImageBatchBase,
+    deadlineAt: Schema.Finite,
+  }),
+  Schema.TaggedStruct("Dispatching", {
+    ...PendingImageBatchBase,
+    requestId: Schema.String,
+    prompt: Schema.String,
+  }),
+]);
+export type PendingImageBatch = Schema.Schema.Type<typeof PendingImageBatchSchema>;
+
 const BridgeStateSchema = Schema.Struct({
   version: Schema.Literal(2),
   enabled: Schema.Boolean,
   cursor: Schema.String,
   processedMessageIds: Schema.Array(Schema.String),
+  pendingImageBatch: Schema.optional(PendingImageBatchSchema),
   auth: Schema.optional(WeixinAuthSchema),
   binding: Schema.optional(SessionBindingSchema),
 });
