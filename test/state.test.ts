@@ -2,6 +2,8 @@ import { expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem } from "effect";
 import { withTestStore } from "./runtime.ts";
 
+const hasPosixFileModes = process.platform !== "win32";
+
 it.effect("state store persists auth and bounds processed ids", () =>
   withTestStore(
     (store) =>
@@ -23,7 +25,7 @@ it.effect("state store persists auth and bounds processed ids", () =>
         const info = yield* fs.stat(store.path);
         const encoded = yield* fs.readFileString(store.path);
         expect(state.processedMessageIds).toEqual(["two", "three"]);
-        expect(info.mode & 0o777).toBe(0o600);
+        if (hasPosixFileModes) expect(info.mode & 0o777).toBe(0o600);
         expect(encoded).not.toMatch(/\.tmp/);
       }),
     2,
