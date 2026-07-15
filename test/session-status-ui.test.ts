@@ -7,8 +7,8 @@ import {
 
 const status = (connected: boolean): WeixinStatusProjection => ({
   kind: "pi-weixin/status",
-  version: 1,
-  connected,
+  version: 2,
+  bindings: [{ sessionId: "session-a", accountId: "wx-bot-1", connected }],
 });
 
 it("publishes structured connection state when the host supports it", () => {
@@ -19,8 +19,8 @@ it("publishes structured connection state when the host supports it", () => {
     setStatus: (_key, value) => text.push(value),
   };
 
-  publishSessionStatus(ui, status(true));
-  publishSessionStatus(ui, status(false));
+  publishSessionStatus(ui, status(true), "session-a");
+  publishSessionStatus(ui, status(false), "session-a");
 
   expect(structured).toEqual([status(true), status(false)]);
   expect(text).toEqual([]);
@@ -32,8 +32,8 @@ it("keeps the text status as a compatibility projection for terminal hosts", () 
     setStatus: (_key, value) => text.push(value),
   };
 
-  publishSessionStatus(ui, status(true));
-  publishSessionStatus(ui, status(false));
+  publishSessionStatus(ui, status(true), "session-a");
+  publishSessionStatus(ui, status(false), "session-a");
 
-  expect(text).toEqual(["微信已连接", undefined]);
+  expect(text).toEqual(["微信已连接", "微信未连接"]);
 });
