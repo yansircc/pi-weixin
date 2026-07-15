@@ -9,6 +9,8 @@ import type { JsonHttpClient } from "./http.ts";
 import type { ImageContent } from "./media.ts";
 import { PiPromptProgressEventSchema, type PiToolProgress } from "./schema.ts";
 
+export const DEFAULT_PI_WEB_BASE_URL = "http://localhost:30141";
+
 export interface PiGateway {
   readonly promptAndWait: <E>(
     sessionId: string,

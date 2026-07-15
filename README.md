@@ -16,7 +16,7 @@
 /weixin login
 ```
 
-扫描二维码后，当前 Pi session 会成为微信消息的目标。默认连接本机 `http://127.0.0.1:30141`；可用 `PI_WEB_BASE_URL` 改为其他 loopback 地址。
+扫描二维码后，当前 Pi session 会成为微信消息的目标。默认通过 address-family-neutral 的 `http://localhost:30141` 连接本机 pi-web，由运行时选择可用的 IPv4/IPv6 loopback；可用 `PI_WEB_BASE_URL` 显式覆盖。
 
 ## 开发
 

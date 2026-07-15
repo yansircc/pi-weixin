@@ -27,7 +27,7 @@ import {
   QrCodeError,
   StateStoreError,
 } from "./errors.ts";
-import { makePiGateway, type PiGateway } from "./gateway.ts";
+import { DEFAULT_PI_WEB_BASE_URL, makePiGateway, type PiGateway } from "./gateway.ts";
 import { makeJsonHttpClient } from "./http.ts";
 import { makeIlinkClient, type LoginCallbacks, type WeixinTransport } from "./ilink.ts";
 import { IlinkMessageSchema, type UpdatesResponse } from "./ilink-protocol.ts";
@@ -256,7 +256,7 @@ export const BridgeLive = Layer.effect(
       Config.withDefault(path.join(home, ".pi", "agent", "pi-weixin", "state.json")),
     );
     const piWebBaseUrl = yield* Config.string("PI_WEB_BASE_URL").pipe(
-      Config.withDefault("http://127.0.0.1:30141"),
+      Config.withDefault(DEFAULT_PI_WEB_BASE_URL),
     );
     const store = yield* makeStateStore(statePath);
     const transport = makeIlinkClient(makeJsonHttpClient(httpClient));

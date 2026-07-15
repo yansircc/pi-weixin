@@ -1,8 +1,12 @@
 import { expect, it } from "@effect/vitest";
 import { Effect, Exit, Stream } from "effect";
 import { HttpRequestError } from "../src/errors.ts";
-import { makePiGateway } from "../src/gateway.ts";
+import { DEFAULT_PI_WEB_BASE_URL, makePiGateway } from "../src/gateway.ts";
 import type { JsonHttpClient, JsonHttpRequest } from "../src/http.ts";
+
+it("uses the address-family-neutral loopback hostname by default", () => {
+  expect(DEFAULT_PI_WEB_BASE_URL).toBe("http://localhost:30141");
+});
 
 it.effect("gateway submits a blocking prompt to the loopback pi-web host", () =>
   Effect.gen(function* () {
