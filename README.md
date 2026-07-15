@@ -35,9 +35,7 @@ pnpm verify
 pnpm build
 ```
 
-`pnpm verify` 依次执行格式与 lint、Effect language service 类型检查、测试、自包含构建、tarball 内容检查，以及零安装目录中的 Pi extension loader 验收。Pi 加载的唯一构建入口是 `dist/pi/extension.js`。
-
-`pnpm effect:scan` 是额外的 Effect 语义检查，当前依赖单独安装的 `effect-skill-scan`。在 scanner 发布为可锁定的 npm 开发依赖后，应把它重新纳入 `pnpm verify`；在此之前，CI 不从个人机器路径或未发布源码安装它。
+`pnpm verify` 依次执行格式与 lint、Effect language service 类型检查、测试、锁定版本的 `effect-scan` 语义检查、自包含构建、tarball 内容检查，以及零安装目录中的 Pi extension loader 验收。Pi 加载的唯一构建入口是 `dist/pi/extension.js`。
 
 ## 分发
 

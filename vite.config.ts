@@ -34,7 +34,7 @@ export default defineConfig({
         cache: false,
       },
       "ci:effect": {
-        command: "effect-skill-scan . --strict --output raw-json --profile",
+        command: "effect-scan . --strict --output raw-json --profile",
         cache: false,
       },
       "ci:verify": {
@@ -42,6 +42,7 @@ export default defineConfig({
           "vp check",
           "vp run ci:typecheck",
           "vp test",
+          "vp run ci:effect",
           "vp run ci:build",
           "vp run ci:distribution",
         ],
