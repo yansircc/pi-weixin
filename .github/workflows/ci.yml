@@ -10,6 +10,11 @@ on:
 permissions:
   contents: read
 
+env:
+  GIT_CONFIG_COUNT: 1
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
+
 concurrency:
   group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor != 'github-actions[bot]' && 'release-main' || format('{0}-{1}', github.workflow, github.ref) }}
   cancel-in-progress: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor != 'github-actions[bot]') }}
@@ -47,7 +52,6 @@ jobs:
         with:
           node-version: 24.11.0
           cache: pnpm
-          registry-url: https://registry.npmjs.org
 
       - name: Check out the event source
         run: |
@@ -240,7 +244,6 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 24.11.0
-          registry-url: https://registry.npmjs.org
 
       - name: Download verified candidate
         uses: actions/download-artifact@v8
@@ -282,7 +285,7 @@ jobs:
             echo "Could not determine whether ${package_spec} is published." >&2
             exit 1
           fi
-          npm publish "${archive}" --access public --provenance
+          npm publish "${archive}" --access public --provenance --registry=https://registry.npmjs.org/
 
   verify-public:
     name: Verify public projection
@@ -301,7 +304,6 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 24.11.0
-          registry-url: https://registry.npmjs.org
 
       - name: Download verified candidate
         uses: actions/download-artifact@v8
@@ -338,4 +340,5 @@ jobs:
             --prefix "${install_root}" \
             --ignore-scripts=false \
             --no-audit \
-            --no-fund
+            --no-fund \
+            --registry=https://registry.npmjs.org/
